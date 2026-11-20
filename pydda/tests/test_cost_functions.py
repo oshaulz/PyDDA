@@ -212,6 +212,39 @@ def test_calculate_mass_continuity():
     assert cost > 0
 
 
+@pytest.mark.parametrize("anel", [0, 1])
+@pytest.mark.parametrize("use_fluid", [False, True])
+def test_calculate_mass_continuity_gradient_matches_cost(anel, use_fluid):
+    """The NumPy mass continuity gradient must differentiate its own cost,
+    including the one-sided differences at the grid edges, the anelastic
+    term and the fluid mask."""
+    rng = np.random.default_rng(7)
+    shape = (6, 7, 8)
+    winds = rng.normal(size=(3,) + shape) * 5.0
+    dx, dy, dz = 500.0, 700.0, 300.0
+    heights = np.arange(shape[0]) * dz
+    z = np.broadcast_to(heights[:, None, None], shape).copy()
+    fluid = rng.random(shape) > 0.2 if use_fluid else None
+
+    def cost(x):
+        return pydda.cost_functions.calculate_mass_continuity(
+            x[0], x[1], x[2], z, dx, dy, dz, anel=anel, fluid=fluid
+        )
+
+    gradient = pydda.cost_functions.calculate_mass_continuity_gradient(
+        *winds, z, dx, dy, dz, anel=anel, upper_bc=0, lower_bc=0, fluid=fluid
+    ).reshape(winds.shape)
+    for _ in range(3):
+        direction = rng.normal(size=winds.shape)
+        epsilon = 1e-4
+        finite_difference = (
+            cost(winds + epsilon * direction) - cost(winds - epsilon * direction)
+        ) / (2 * epsilon)
+        np.testing.assert_allclose(
+            np.sum(gradient * direction), finite_difference, rtol=1e-6
+        )
+
+
 @pytest.mark.skipif(not JAX_AVAILABLE, reason="Jax not installed")
 def test_calculate_mass_continuity_jax():
     """In a constant wind field, div * V = 0, so we should get zero for mass

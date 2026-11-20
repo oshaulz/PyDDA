@@ -39,6 +39,43 @@ def calculate_echo_top_mask(vrs, z, above=2.0):
     return np.logical_and(np.asarray(z) > above * 1000.0, n_obs == 0)
 
 
+def _gradient_adjoint(r, h, axis):
+    """
+    Applies the transpose of np.gradient(f, h, axis=axis) to r.
+
+    np.gradient uses centred differences in the interior and one-sided first
+    differences at both ends (edge_order=1). Its transpose is not
+    -np.gradient, which differs at the two points next to each boundary, so
+    gradients of cost functions built on np.gradient need this operator.
+
+    Parameters
+    ----------
+    r: Float array
+        Array to apply the transpose to, with the shape of np.gradient's
+        output.
+    h: float
+        Uniform grid spacing along *axis*.
+    axis: int
+        Axis along which np.gradient was taken.
+
+    Returns
+    -------
+    out: Float array
+        The transpose of the finite difference operator applied to r.
+    """
+    r = np.moveaxis(np.asarray(r, dtype=float), axis, 0)
+    out = np.zeros_like(r)
+    # Interior points i = 1 .. n - 2: (f[i + 1] - f[i - 1]) / (2 h)
+    out[2:] += r[1:-1] / (2.0 * h)
+    out[:-2] -= r[1:-1] / (2.0 * h)
+    # Ends: (f[1] - f[0]) / h and (f[-1] - f[-2]) / h
+    out[1] += r[0] / h
+    out[0] -= r[0] / h
+    out[-1] += r[-1] / h
+    out[-2] -= r[-1] / h
+    return np.moveaxis(out, 0, axis)
+
+
 def _apply_upper_bc(grad_w, upper_bc, upper_bc_mask=None):
     """
     Zeroes the vertical velocity gradient where the upper impermeability
@@ -703,12 +740,17 @@ def calculate_mass_continuity_gradient(
 
     div = dudx + dvdy + dwdz + anel_term
 
+    # The cost is coeff / 2 * sum(fluid * div**2), so its gradient is the
+    # transpose of the divergence operator applied to coeff * fluid * div.
+    residual = coeff * div
     if fluid is not None:
-        div = fluid * div
+        residual = fluid * residual
 
-    grad_u = -np.gradient(div, dx, axis=2) * coeff
-    grad_v = -np.gradient(div, dy, axis=1) * coeff
-    grad_w = -np.gradient(div, dz, axis=0) * coeff
+    grad_u = _gradient_adjoint(residual, dx, axis=2)
+    grad_v = _gradient_adjoint(residual, dy, axis=1)
+    grad_w = _gradient_adjoint(residual, dz, axis=0)
+    if anel == 1:
+        grad_w = grad_w + drho_dz / rho * residual
 
     # Impermeability condition
     if lower_bc == 1:
