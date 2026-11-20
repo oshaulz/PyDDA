@@ -777,7 +777,9 @@ def _get_dd_wind_field_scipy(
             diff = np.where(parameters.bg_weights == 0, diff, np.nan)
             delta = np.nanmax(diff)
             if delta < wind_tol:
-                return True
+                # SciPy's L-BFGS-B ignores the callback's return value and
+                # stops only when the callback raises StopIteration.
+                raise StopIteration
             _wprevmax = _wcurrmax
             iterations = iterations + 1
             print("Max change in w: %4.3f" % delta)
